@@ -1,158 +1,158 @@
 package com.crawl.chungkhoan.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
+import io.github.bonigarcia.wdm.WebDriverManager;
 import lombok.extern.slf4j.Slf4j;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
+import org.openqa.selenium.By;
+import org.openqa.selenium.WebDriver;
+import org.openqa.selenium.WebElement;
+import org.openqa.selenium.chrome.ChromeDriver;
+import org.openqa.selenium.chrome.ChromeOptions;
+import org.openqa.selenium.support.ui.ExpectedConditions;
+import org.openqa.selenium.support.ui.WebDriverWait;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
 /**
- * Service lấy dữ liệu thị trường chứng khoán từ API công khai
- * Sử dụng API của SSI (https://iboard.ssi.com.vn)
+ * Service lấy dữ liệu thị trường chứng khoán
+ * Crawl từ CafeF bằng Selenium
  */
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class StockMarketService {
 
-    private final OkHttpClient httpClient = new OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
-            .build();
-
-    private final ObjectMapper objectMapper = new ObjectMapper();
-
     /**
-     * Lấy dữ liệu cổ phiếu từ SSI iBoard API
+     * Lấy dữ liệu cổ phiếu từ CafeF bằng Selenium
      */
     public List<Map<String, Object>> getStockData() {
         List<Map<String, Object>> stocks = new ArrayList<>();
-        
-        try {
-            // API SSI iBoard - Top stocks
-            String url = "https://iboard-api.ssi.com.vn/statistics/charts/top-stocks?language=vi&lookupRequest.market=HOSE&lookupRequest.type=VALUE&lookupRequest.order=DESC";
-            
-            Request request = new Request.Builder()
-                    .url(url)
-                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    .build();
+        WebDriver driver = null;
 
-            try (Response response = httpClient.newCall(request).execute()) {
-                if (response.isSuccessful() && response.body() != null) {
-                    String jsonData = response.body().string();
-                    JsonNode root = objectMapper.readTree(jsonData);
-                    
-                    // Parse data
-                    if (root.has("data") && root.get("data").isArray()) {
-                        JsonNode dataArray = root.get("data");
-                        
-                        int count = 0;
-                        for (JsonNode item : dataArray) {
-                            if (count >= 8) break; // Lấy 8 cổ phiếu
-                            
+        try {
+            log.info("Setting up ChromeDriver for stock data...");
+            WebDriverManager.chromedriver().setup();
+
+            ChromeOptions options = new ChromeOptions();
+            options.addArguments("--headless");
+            options.addArguments("--no-sandbox");
+            options.addArguments("--disable-dev-shm-usage");
+            options.addArguments("--disable-gpu");
+            options.addArguments("--window-size=1920,1080");
+
+            driver = new ChromeDriver(options);
+
+            String url = "https://cafef.vn/";
+            log.info("Loading CafeF homepage: {}", url);
+            driver.get(url);
+
+            WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(10));
+            wait.until(ExpectedConditions.presenceOfElementLocated(By.tagName("body")));
+
+            // Tìm bảng top cổ phiếu (thường ở sidebar hoặc homepage)
+            List<WebElement> stockRows = driver.findElements(By.cssSelector(
+                "table.stock-table tr, " +
+                ".stock-item, " +
+                ".top-stock-item, " +
+                "[class*='stock'] tr"
+            ));
+
+            log.info("Found {} potential stock elements", stockRows.size());
+
+            int count = 0;
+            for (WebElement row : stockRows) {
+                if (count >= 8) break;
+
+                try {
+                    String text = row.getText();
+                    if (text == null || text.trim().isEmpty()) continue;
+
+                    // Parse text: "VNM Vinamilk 78.5 +1.2 +1.55%"
+                    String[] parts = text.split("\\s+");
+                    if (parts.length >= 3) {
+                        String symbol = parts[0].trim();
+
+                        // Kiểm tra symbol hợp lệ (3-4 ký tự chữ in hoa)
+                        if (symbol.matches("^[A-Z]{3,4}$")) {
                             Map<String, Object> stock = new HashMap<>();
-                            stock.put("symbol", item.has("stockCode") ? item.get("stockCode").asText() : "");
-                            stock.put("name", item.has("stockName") ? item.get("stockName").asText() : "");
-                            stock.put("price", item.has("lastPrice") ? item.get("lastPrice").asDouble() : 0.0);
-                            stock.put("change", item.has("priceChange") ? item.get("priceChange").asDouble() : 0.0);
-                            stock.put("changePercent", item.has("percentPriceChange") ? item.get("percentPriceChange").asDouble() : 0.0);
-                            stock.put("volume", item.has("totalVolume") ? item.get("totalVolume").asLong() : 0L);
-                            
+                            stock.put("symbol", symbol);
+                            stock.put("name", parts.length > 1 ? parts[1] : symbol);
+                            stock.put("price", parts.length > 2 ? parseDouble(parts[2]) : 0.0);
+                            stock.put("change", parts.length > 3 ? parseDouble(parts[3]) : 0.0);
+                            stock.put("changePercent", parts.length > 4 ? parseDouble(parts[4].replace("%", "")) : 0.0);
+                            stock.put("volume", 0L);
+
                             stocks.add(stock);
                             count++;
+
+                            log.debug("Parsed stock: {}", symbol);
                         }
                     }
-                    
-                    log.info("Fetched {} stocks from SSI API", stocks.size());
-                } else {
-                    log.warn("SSI API returned non-successful response: {}", response.code());
+                } catch (Exception e) {
+                    log.debug("Error parsing stock element: {}", e.getMessage());
                 }
             }
-            
+
+            log.info("Successfully crawled {} stocks from CafeF", stocks.size());
+
         } catch (Exception e) {
-            log.error("Error fetching stock data from SSI: {}", e.getMessage(), e);
-            // Return mock data nếu API fail
-            return getMockStockData();
+            log.error("Error crawling stock data with Selenium: {}", e.getMessage(), e);
+        } finally {
+            if (driver != null) {
+                try {
+                    driver.quit();
+                } catch (Exception e) {
+                    log.warn("Error closing driver: {}", e.getMessage());
+                }
+            }
         }
-        
-        // Nếu không có data, return mock
+
         if (stocks.isEmpty()) {
-            return getMockStockData();
+            log.warn("Stock data not available - returning empty list");
         }
-        
+
         return stocks;
     }
 
     /**
-     * Mock data backup khi API fail
+     * Parse double từ string, trả về 0 nếu fail
      */
-    private List<Map<String, Object>> getMockStockData() {
-        List<Map<String, Object>> stocks = new ArrayList<>();
-        
-        stocks.add(createStock("VNM", "Vinamilk", 78.5, 1.2, 1.55, 2450000));
-        stocks.add(createStock("VIC", "Vingroup", 45.3, -0.8, -1.73, 5680000));
-        stocks.add(createStock("HPG", "Hòa Phát", 28.9, 0.5, 1.76, 8920000));
-        stocks.add(createStock("VHM", "Vinhomes", 62.1, -1.2, -1.90, 3450000));
-        stocks.add(createStock("TCB", "Techcombank", 52.8, 0.9, 1.73, 4230000));
-        stocks.add(createStock("VPB", "VPBank", 18.4, 0.3, 1.66, 6780000));
-        stocks.add(createStock("MSN", "Masan", 89.2, -2.1, -2.30, 1890000));
-        stocks.add(createStock("FPT", "FPT Corp", 125.5, 3.5, 2.87, 2340000));
-        
-        return stocks;
+    private double parseDouble(String value) {
+        try {
+            return Double.parseDouble(value.replace(",", "").trim());
+        } catch (Exception e) {
+            return 0.0;
+        }
     }
 
     /**
-     * Lấy dữ liệu trái phiếu (mock data - API trái phiếu VN khó truy cập)
+     * Parse long từ string, trả về 0 nếu fail
+     */
+    private long parseLong(String value) {
+        try {
+            return Long.parseLong(value.replace(",", "").replace(".", "").trim());
+        } catch (Exception e) {
+            return 0L;
+        }
+    }
+
+    /**
+     * Lấy dữ liệu trái phiếu - Tạm thời không khả dụng
      */
     public List<Map<String, Object>> getBondData() {
-        List<Map<String, Object>> bonds = new ArrayList<>();
-        
-        bonds.add(createStock("BOND001", "TP Chính phủ 5Y", 102.5, 0.2, 0.20, 150000));
-        bonds.add(createStock("BOND002", "TP Chính phủ 10Y", 105.8, -0.1, -0.09, 230000));
-        bonds.add(createStock("BOND003", "TP Doanh nghiệp VNM", 98.3, 0.5, 0.51, 89000));
-        bonds.add(createStock("BOND004", "TP Doanh nghiệp VIC", 96.7, -0.3, -0.31, 120000));
-        bonds.add(createStock("BOND005", "TP Chính phủ 3Y", 101.2, 0.1, 0.10, 180000));
-        
-        return bonds;
+        log.warn("Bond data not available - API not implemented");
+        return new ArrayList<>();
     }
 
     /**
-     * Lấy dữ liệu chứng chỉ quỹ (mock data)
+     * Lấy dữ liệu chứng chỉ quỹ - Tạm thời không khả dụng
      */
     public List<Map<String, Object>> getFundData() {
-        List<Map<String, Object>> funds = new ArrayList<>();
-        
-        funds.add(createStock("DCDS", "Quỹ DCDS", 15.8, 0.2, 1.28, 450000));
-        funds.add(createStock("DCBC", "Quỹ DCBC", 12.3, -0.1, -0.81, 320000));
-        funds.add(createStock("VFMVN30", "Quỹ VFM VN30", 18.9, 0.4, 2.16, 580000));
-        funds.add(createStock("SSISCA", "Quỹ SSI SCA", 14.5, 0.3, 2.11, 290000));
-        funds.add(createStock("VESAF", "Quỹ VESAF", 16.2, -0.2, -1.22, 410000));
-        
-        return funds;
-    }
-
-    /**
-     * Helper method tạo stock object
-     */
-    private Map<String, Object> createStock(String symbol, String name, double price, 
-                                           double change, double changePercent, long volume) {
-        Map<String, Object> stock = new HashMap<>();
-        stock.put("symbol", symbol);
-        stock.put("name", name);
-        stock.put("price", price);
-        stock.put("change", change);
-        stock.put("changePercent", changePercent);
-        stock.put("volume", volume);
-        return stock;
+        log.warn("Fund data not available - API not implemented");
+        return new ArrayList<>();
     }
 }
 

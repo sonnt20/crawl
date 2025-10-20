@@ -24,15 +24,19 @@ public class MarketController {
     @GetMapping("/stocks")
     public ResponseEntity<Map<String, Object>> getStocks() {
         log.info("Fetching stock market data");
-        
+
         try {
             List<Map<String, Object>> stocks = stockMarketService.getStockData();
-            
+
             Map<String, Object> response = new HashMap<>();
             response.put("data", stocks);
             response.put("count", stocks.size());
             response.put("type", "stocks");
-            
+
+            if (stocks.isEmpty()) {
+                response.put("message", "Dữ liệu cổ phiếu tạm thời không khả dụng");
+            }
+
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Error fetching stocks: {}", e.getMessage());
@@ -46,15 +50,19 @@ public class MarketController {
     @GetMapping("/bonds")
     public ResponseEntity<Map<String, Object>> getBonds() {
         log.info("Fetching bond market data");
-        
+
         try {
             List<Map<String, Object>> bonds = stockMarketService.getBondData();
-            
+
             Map<String, Object> response = new HashMap<>();
             response.put("data", bonds);
             response.put("count", bonds.size());
             response.put("type", "bonds");
-            
+
+            if (bonds.isEmpty()) {
+                response.put("message", "Dữ liệu trái phiếu tạm thời không khả dụng");
+            }
+
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Error fetching bonds: {}", e.getMessage());
@@ -68,15 +76,19 @@ public class MarketController {
     @GetMapping("/funds")
     public ResponseEntity<Map<String, Object>> getFunds() {
         log.info("Fetching fund market data");
-        
+
         try {
             List<Map<String, Object>> funds = stockMarketService.getFundData();
-            
+
             Map<String, Object> response = new HashMap<>();
             response.put("data", funds);
             response.put("count", funds.size());
             response.put("type", "funds");
-            
+
+            if (funds.isEmpty()) {
+                response.put("message", "Dữ liệu chứng chỉ quỹ tạm thời không khả dụng");
+            }
+
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Error fetching funds: {}", e.getMessage());

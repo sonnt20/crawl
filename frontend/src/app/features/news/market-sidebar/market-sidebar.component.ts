@@ -2,6 +2,7 @@ import { Component, signal, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../../environments/environment';
+import { LoadingSpinnerComponent } from '../../../shared/components/loading-spinner/loading-spinner.component';
 
 interface StockData {
   symbol: string;
@@ -15,7 +16,7 @@ interface StockData {
 @Component({
   selector: 'app-market-sidebar',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, LoadingSpinnerComponent],
   template: `
     <div class="market-sidebar">
       <h3>📊 Thị trường chứng khoán</h3>
@@ -45,8 +46,16 @@ interface StockData {
       </div>
 
       <div class="market-data">
-        @if (activeTab() === 'stocks') {
-          <div class="data-list">
+        @if (isLoading()) {
+          <app-loading-spinner [message]="'Đang tải dữ liệu thị trường...'" />
+        } @else {
+          @if (activeTab() === 'stocks') {
+            @if (stocks().length === 0) {
+              <div class="empty-state">
+                <p>📊 Dữ liệu cổ phiếu tạm thời không khả dụng</p>
+              </div>
+            } @else {
+              <div class="data-list">
             @for (stock of stocks(); track stock.symbol) {
               <div class="data-item">
                 <div class="item-header">
@@ -66,11 +75,17 @@ interface StockData {
                 </div>
               </div>
             }
-          </div>
-        }
+              </div>
+            }
+          }
 
-        @if (activeTab() === 'bonds') {
-          <div class="data-list">
+          @if (activeTab() === 'bonds') {
+            @if (bonds().length === 0) {
+              <div class="empty-state">
+                <p>📊 Dữ liệu trái phiếu tạm thời không khả dụng</p>
+              </div>
+            } @else {
+              <div class="data-list">
             @for (bond of bonds(); track bond.symbol) {
               <div class="data-item">
                 <div class="item-header">
@@ -90,11 +105,17 @@ interface StockData {
                 </div>
               </div>
             }
-          </div>
-        }
+              </div>
+            }
+          }
 
-        @if (activeTab() === 'funds') {
-          <div class="data-list">
+          @if (activeTab() === 'funds') {
+            @if (funds().length === 0) {
+              <div class="empty-state">
+                <p>📊 Dữ liệu chứng chỉ quỹ tạm thời không khả dụng</p>
+              </div>
+            } @else {
+              <div class="data-list">
             @for (fund of funds(); track fund.symbol) {
               <div class="data-item">
                 <div class="item-header">
@@ -114,7 +135,9 @@ interface StockData {
                 </div>
               </div>
             }
-          </div>
+              </div>
+            }
+          }
         }
       </div>
     </div>
@@ -170,6 +193,17 @@ interface StockData {
     .market-data {
       max-height: calc(100vh - 250px);
       overflow-y: auto;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: #999;
+    }
+
+    .empty-state p {
+      margin: 0;
+      font-size: 14px;
     }
 
     .data-list {
@@ -284,7 +318,7 @@ export class MarketSidebarComponent implements OnInit {
   stocks = signal<StockData[]>([]);
   bonds = signal<StockData[]>([]);
   funds = signal<StockData[]>([]);
-  loading = signal<boolean>(false);
+  isLoading = signal<boolean>(false);
 
   ngOnInit() {
     this.loadMarketData();
@@ -296,43 +330,40 @@ export class MarketSidebarComponent implements OnInit {
   }
 
   loadMarketData() {
-    this.loading.set(true);
+    this.isLoading.set(true);
 
     // Load stocks
-    this.http.get<any>(`${environment.apiUrl}/market/stocks`).subscribe({
+    this.http.get<any>(`${environment.apiUrl}/api/market/stocks`).subscribe({
       next: (response) => {
-        if (response.data) {
-          this.stocks.set(response.data);
-        }
+        this.stocks.set(response.data || []);
       },
       error: (error) => {
         console.error('Error loading stocks:', error);
+        this.stocks.set([]);
       }
     });
 
     // Load bonds
-    this.http.get<any>(`${environment.apiUrl}/market/bonds`).subscribe({
+    this.http.get<any>(`${environment.apiUrl}/api/market/bonds`).subscribe({
       next: (response) => {
-        if (response.data) {
-          this.bonds.set(response.data);
-        }
+        this.bonds.set(response.data || []);
       },
       error: (error) => {
         console.error('Error loading bonds:', error);
+        this.bonds.set([]);
       }
     });
 
     // Load funds
-    this.http.get<any>(`${environment.apiUrl}/market/funds`).subscribe({
+    this.http.get<any>(`${environment.apiUrl}/api/market/funds`).subscribe({
       next: (response) => {
-        if (response.data) {
-          this.funds.set(response.data);
-        }
-        this.loading.set(false);
+        this.funds.set(response.data || []);
+        this.isLoading.set(false);
       },
       error: (error) => {
         console.error('Error loading funds:', error);
-        this.loading.set(false);
+        this.funds.set([]);
+        this.isLoading.set(false);
       }
     });
   }

@@ -12,19 +12,26 @@ import { MarketSidebarComponent } from '../market-sidebar/market-sidebar.compone
   imports: [CommonModule, FormsModule, MarketSidebarComponent],
   template: `
     <div class="news-layout">
-      <app-market-sidebar class="sidebar"></app-market-sidebar>
-
       <div class="container">
       <div class="news-header">
         <div class="header-top">
           <h1>📰 Tin tức mới nhất</h1>
-          <button class="btn btn-success" (click)="triggerCrawl()" [disabled]="crawling()">
-            @if (crawling()) {
-              ⏳ Đang crawl...
-            } @else {
-              🔄 Crawl ngay
+          <div class="crawl-controls">
+            <button class="btn btn-success" (click)="triggerCrawl()" [disabled]="crawling() || !canCrawl()">
+              @if (crawling()) {
+                ⏳ Đang crawl...
+              } @else if (!canCrawl()) {
+                ⏱️ Đợi {{ formatCountdown(secondsUntilNext()) }}
+              } @else {
+                🔄 Crawl ngay
+              }
+            </button>
+            @if (!canCrawl() && secondsUntilNext() > 0) {
+              <span class="countdown-info">
+                Có thể crawl sau {{ formatCountdown(secondsUntilNext()) }}
+              </span>
             }
-          </button>
+          </div>
         </div>
 
         <div class="filters">
@@ -75,10 +82,10 @@ import { MarketSidebarComponent } from '../market-sidebar/market-sidebar.compone
               <div class="news-content">
                 <div class="news-meta">
                   <span class="source">{{ news.source }}</span>
-                  <span class="date" title="Giờ đăng: {{ formatDateTime(news.publishedAt) }}">
-                    📅 {{ formatDate(news.publishedAt) }}
+                  <span class="published-date" title="Thời gian đăng trên kênh chính chủ: {{ formatDateTime(news.publishedAt) }}">
+                    📅 Đăng: {{ formatDate(news.publishedAt) }}
                   </span>
-                  <span class="crawled-date" title="Giờ crawl: {{ formatDateTime(news.crawledAt) }}">
+                  <span class="crawled-date" title="Thời gian hệ thống crawl: {{ formatDateTime(news.crawledAt) }}">
                     🕐 Crawl: {{ formatTime(news.crawledAt) }}
                   </span>
                 </div>
@@ -128,12 +135,14 @@ import { MarketSidebarComponent } from '../market-sidebar/market-sidebar.compone
         }
       }
       </div>
+
+      <app-market-sidebar class="sidebar"></app-market-sidebar>
     </div>
   `,
   styles: [`
     .news-layout {
       display: grid;
-      grid-template-columns: 300px 1fr;
+      grid-template-columns: 1fr 320px;
       gap: 30px;
       max-width: 1400px;
       margin: 0 auto;
@@ -142,10 +151,12 @@ import { MarketSidebarComponent } from '../market-sidebar/market-sidebar.compone
 
     .sidebar {
       display: block;
+      order: 2;
     }
 
     .container {
       min-width: 0;
+      order: 1;
     }
 
     @media (max-width: 1024px) {
@@ -169,6 +180,22 @@ import { MarketSidebarComponent } from '../market-sidebar/market-sidebar.compone
 
         h1 {
           margin: 0;
+        }
+
+        .crawl-controls {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 8px;
+
+          .countdown-info {
+            font-size: 12px;
+            color: #ff9800;
+            font-weight: 600;
+            background: #fff3e0;
+            padding: 4px 12px;
+            border-radius: 4px;
+          }
         }
       }
     }
@@ -259,17 +286,27 @@ import { MarketSidebarComponent } from '../market-sidebar/market-sidebar.compone
       .source {
         font-weight: 600;
         color: #007bff;
+        background: #e7f3ff;
+        padding: 4px 8px;
+        border-radius: 4px;
       }
 
-      .date {
+      .published-date {
         color: #28a745;
+        font-weight: 600;
         cursor: help;
+        background: #e8f5e9;
+        padding: 4px 8px;
+        border-radius: 4px;
       }
 
       .crawled-date {
         color: #6c757d;
         font-size: 11px;
         cursor: help;
+        background: #f5f5f5;
+        padding: 4px 8px;
+        border-radius: 4px;
       }
     }
 
@@ -336,14 +373,41 @@ export class NewsListComponent implements OnInit {
   selectedDays = '7';
   selectedSource = '';
 
+  // Rate limit signals
+  canCrawl = signal(true);
+  secondsUntilNext = signal(0);
+  private countdownInterval: any;
+
   ngOnInit(): void {
-    // Tự động crawl khi vào trang
-    this.triggerCrawl();
+    // Check crawl status
+    this.checkCrawlStatus();
+
+    // Tự động crawl khi vào trang (nếu được phép)
+    setTimeout(() => {
+      if (this.canCrawl()) {
+        this.triggerCrawl();
+      }
+    }, 500);
 
     // Load news sau 3 giây (đợi crawl xong)
     setTimeout(() => {
       this.loadNews();
     }, 3000);
+
+    // Update countdown mỗi giây
+    this.countdownInterval = setInterval(() => {
+      if (this.secondsUntilNext() > 0) {
+        this.secondsUntilNext.update(s => s - 1);
+      } else if (!this.canCrawl()) {
+        this.checkCrawlStatus();
+      }
+    }, 1000);
+  }
+
+  ngOnDestroy(): void {
+    if (this.countdownInterval) {
+      clearInterval(this.countdownInterval);
+    }
   }
 
   applyFilters(): void {
@@ -351,13 +415,42 @@ export class NewsListComponent implements OnInit {
     this.loadNews();
   }
 
-  triggerCrawl(): void {
+  checkCrawlStatus(): void {
+    this.http.get<any>('http://localhost:8080/api/crawl/status').subscribe({
+      next: (response) => {
+        this.canCrawl.set(response.canCrawl);
+        this.secondsUntilNext.set(response.secondsUntilNext || 0);
+      },
+      error: (error) => {
+        console.error('Error checking crawl status:', error);
+      }
+    });
+  }
+
+  /**
+   * Trigger crawl với số lượng items tùy chỉnh
+   * @param itemsPerSource Số lượng tin tức cần crawl mỗi source (mặc định 15)
+   */
+  triggerCrawl(itemsPerSource: number = 15): void {
+    if (!this.canCrawl()) {
+      this.errorMessage.set('Vui lòng đợi trước khi crawl tiếp');
+      setTimeout(() => this.errorMessage.set(''), 3000);
+      return;
+    }
+
     this.crawling.set(true);
     this.errorMessage.set('');
 
-    this.http.post<any>('http://localhost:8080/api/crawl/user-trigger', {}).subscribe({
+    // Gửi request với parameter itemsPerSource
+    const url = `http://localhost:8080/api/crawl/user-trigger?itemsPerSource=${itemsPerSource}`;
+
+    this.http.post<any>(url, {}).subscribe({
       next: (response) => {
         console.log('Crawl triggered:', response);
+
+        // Update rate limit info
+        this.canCrawl.set(response.canCrawl || false);
+        this.secondsUntilNext.set(response.secondsUntilNext || 0);
 
         // Đợi 3 giây rồi reload news
         setTimeout(() => {
@@ -373,6 +466,10 @@ export class NewsListComponent implements OnInit {
         if (error.status === 429) {
           const message = error.error?.message || 'Vui lòng đợi trước khi crawl tiếp';
           this.errorMessage.set(message);
+
+          // Update rate limit info
+          this.canCrawl.set(false);
+          this.secondsUntilNext.set(error.error?.secondsUntilNext || 0);
 
           // Clear error sau 5 giây
           setTimeout(() => {
@@ -424,7 +521,16 @@ export class NewsListComponent implements OnInit {
   }
 
   nextPage(): void {
-    this.currentPage.update(page => page + 1);
+    const newPage = this.currentPage() + 1;
+    this.currentPage.set(newPage);
+
+    // Auto-crawl khi đến trang 5 (index 4) và còn lượt crawl
+    // Mỗi lần crawl 25 items (5 trang x 5 items/trang)
+    if (newPage === 4 && this.canCrawl() && !this.crawling()) {
+      console.log('Reached page 5 - auto-crawling next 25 items...');
+      this.triggerCrawl(25); // Crawl thêm 25 items (5 trang tiếp theo)
+    }
+
     this.loadNews();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -464,6 +570,22 @@ export class NewsListComponent implements OnInit {
       minute: '2-digit',
       second: '2-digit'
     });
+  }
+
+  formatCountdown(seconds: number): string {
+    if (seconds <= 0) return '0 giây';
+
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+
+    if (hours > 0) {
+      return `${hours}h ${minutes}m`;
+    } else if (minutes > 0) {
+      return `${minutes}m ${secs}s`;
+    } else {
+      return `${secs}s`;
+    }
   }
 
   formatTime(dateString: string): string {

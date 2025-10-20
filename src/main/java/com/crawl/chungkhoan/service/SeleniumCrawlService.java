@@ -30,51 +30,62 @@ public class SeleniumCrawlService {
     private final CrawlSourceRepository crawlSourceRepository;
 
     /**
-     * Crawl tất cả sources đang enabled
+     * Crawl tất cả sources đang enabled với số lượng items tùy chỉnh
+     * @param itemsPerSource Số lượng tin tức cần crawl mỗi source
      */
-    public void crawlAllSources() {
+    public void crawlAllSources(int itemsPerSource) {
         List<CrawlSource> sources = crawlSourceRepository.findByEnabled(true);
-        log.info("Starting Selenium crawl for {} enabled sources", sources.size());
-        
+        log.info("Starting Selenium crawl for {} enabled sources (items per source: {})",
+                sources.size(), itemsPerSource);
+
         for (CrawlSource source : sources) {
             try {
-                crawlSource(source);
+                crawlSource(source, itemsPerSource);
             } catch (Exception e) {
                 log.error("Error crawling source {}: {}", source.getName(), e.getMessage(), e);
             }
         }
-        
+
         log.info("Selenium crawl completed for all sources");
     }
 
     /**
-     * Crawl một source cụ thể
+     * Crawl tất cả sources với số lượng mặc định (15 items)
      */
-    public void crawlSource(CrawlSource source) {
-        log.info("Selenium crawling source: {} - {}", source.getName(), source.getUrl());
-        
+    public void crawlAllSources() {
+        crawlAllSources(15);
+    }
+
+    /**
+     * Crawl một source cụ thể với số lượng items tùy chỉnh
+     * @param itemsPerSource Số lượng tin tức cần crawl
+     */
+    public void crawlSource(CrawlSource source, int itemsPerSource) {
+        log.info("Selenium crawling source: {} - {} (items: {})",
+                source.getName(), source.getUrl(), itemsPerSource);
+
         WebDriver driver = null;
         try {
             // Setup ChromeDriver
             driver = setupChromeDriver();
-            
+
             List<News> newsList = new ArrayList<>();
-            
+
             // Crawl theo loại source
             switch (source.getName().toUpperCase()) {
                 case "CAFEF":
-                    newsList = crawlCafeF(driver);
+                    newsList = crawlCafeF(driver, itemsPerSource);
                     break;
                 case "VIETSTOCK":
-                    newsList = crawlVietStock(driver);
+                    newsList = crawlVietStock(driver, itemsPerSource);
                     break;
                 case "SSI":
-                    newsList = crawlSSI(driver);
+                    newsList = crawlSSI(driver, itemsPerSource);
                     break;
                 default:
                     log.warn("Unknown source: {}", source.getName());
             }
-            
+
             // Lưu vào database
             int savedCount = 0;
             for (News news : newsList) {
@@ -85,10 +96,10 @@ public class SeleniumCrawlService {
                     log.debug("Saved news: {}", news.getTitle());
                 }
             }
-            
-            log.info("Crawled {} news items from {} ({} new items saved)", 
+
+            log.info("Crawled {} news items from {} ({} new items saved)",
                     newsList.size(), source.getName(), savedCount);
-            
+
         } catch (Exception e) {
             log.error("Error crawling source {}: {}", source.getName(), e.getMessage(), e);
         } finally {
@@ -96,6 +107,13 @@ public class SeleniumCrawlService {
                 driver.quit();
             }
         }
+    }
+
+    /**
+     * Crawl một source với số lượng mặc định (15 items)
+     */
+    public void crawlSource(CrawlSource source) {
+        crawlSource(source, 15);
     }
 
     /**
@@ -125,27 +143,28 @@ public class SeleniumCrawlService {
 
     /**
      * Crawl CafeF - Tin tức chứng khoán
+     * @param itemsPerSource Số lượng tin tức cần crawl
      */
-    private List<News> crawlCafeF(WebDriver driver) {
+    private List<News> crawlCafeF(WebDriver driver, int itemsPerSource) {
         List<News> newsList = new ArrayList<>();
-        
+
         try {
             String url = "https://cafef.vn/chung-khoan.chn";
-            log.info("CafeF: Loading page {}", url);
+            log.info("CafeF: Loading page {} (items: {})", url, itemsPerSource);
             driver.get(url);
-            
+
             // Đợi page load
             WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(15));
             wait.until(ExpectedConditions.presenceOfElementLocated(By.tagName("body")));
-            
+
             // Thử nhiều selector khác nhau
             List<WebElement> articles = driver.findElements(By.cssSelector("article, .item-news, .box-category-item, .list-news-subfolder li, .tlitem"));
-            
+
             log.info("CafeF: Found {} articles", articles.size());
-            
+
             int count = 0;
             for (WebElement article : articles) {
-                if (count >= 15) break;
+                if (count >= itemsPerSource) break;
                 
                 try {
                     // Tìm title link
@@ -214,25 +233,26 @@ public class SeleniumCrawlService {
 
     /**
      * Crawl VietStock - Tin tức thị trường
+     * @param itemsPerSource Số lượng tin tức cần crawl
      */
-    private List<News> crawlVietStock(WebDriver driver) {
+    private List<News> crawlVietStock(WebDriver driver, int itemsPerSource) {
         List<News> newsList = new ArrayList<>();
-        
+
         try {
             String url = "https://vietstock.vn/";
-            log.info("VietStock: Loading page {}", url);
+            log.info("VietStock: Loading page {} (items: {})", url, itemsPerSource);
             driver.get(url);
-            
+
             WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(15));
             wait.until(ExpectedConditions.presenceOfElementLocated(By.tagName("body")));
-            
+
             List<WebElement> articles = driver.findElements(By.cssSelector(".news-item, article, .box-news li, .list-news li"));
-            
+
             log.info("VietStock: Found {} articles", articles.size());
-            
+
             int count = 0;
             for (WebElement article : articles) {
-                if (count >= 15) break;
+                if (count >= itemsPerSource) break;
                 
                 try {
                     WebElement titleElement = null;
@@ -298,29 +318,30 @@ public class SeleniumCrawlService {
 
     /**
      * Crawl SSI - Tin tức đầu tư
+     * @param itemsPerSource Số lượng tin tức cần crawl
      */
-    private List<News> crawlSSI(WebDriver driver) {
+    private List<News> crawlSSI(WebDriver driver, int itemsPerSource) {
         List<News> newsList = new ArrayList<>();
-        
+
         try {
             String url = "https://www.ssi.com.vn/";
-            log.info("SSI: Loading page {}", url);
+            log.info("SSI: Loading page {} (items: {})", url, itemsPerSource);
             driver.get(url);
-            
+
             WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(15));
             wait.until(ExpectedConditions.presenceOfElementLocated(By.tagName("body")));
-            
+
             List<WebElement> articles = driver.findElements(By.cssSelector(".news-item, article, .box-news li, .list-news li"));
-            
+
             log.info("SSI: Found {} articles", articles.size());
-            
+
             // SSI implementation tương tự VietStock
             // ... (code tương tự)
-            
+
         } catch (Exception e) {
             log.error("Error crawling SSI: {}", e.getMessage(), e);
         }
-        
+
         return newsList;
     }
 }

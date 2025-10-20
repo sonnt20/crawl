@@ -55,10 +55,14 @@ public class CrawlController {
 
     /**
      * Trigger crawl cho user - Theo subscription plan với rate limiting
+     * @param itemsPerSource Số lượng tin tức cần crawl mỗi source (mặc định 15)
      */
     @PostMapping("/user-trigger")
-    public ResponseEntity<Map<String, Object>> userTriggerCrawl(@AuthenticationPrincipal User user) {
-        log.info("User crawl triggered by: {} (tier: {})", user.getEmail(), user.getSubscriptionTier());
+    public ResponseEntity<Map<String, Object>> userTriggerCrawl(
+            @AuthenticationPrincipal User user,
+            @RequestParam(defaultValue = "15") int itemsPerSource) {
+        log.info("User crawl triggered by: {} (tier: {}, items: {})",
+                user.getEmail(), user.getSubscriptionTier(), itemsPerSource);
 
         try {
             // Check rate limit
@@ -79,13 +83,16 @@ public class CrawlController {
             // Record crawl time
             rateLimitService.recordCrawl(user);
 
-            // Start Selenium crawl async
-            new Thread(() -> seleniumCrawlService.crawlAllSources()).start();
+            // Start Selenium crawl async với số lượng items tùy chỉnh
+            new Thread(() -> seleniumCrawlService.crawlAllSources(itemsPerSource)).start();
 
             Map<String, Object> response = new HashMap<>();
             response.put("message", "Selenium crawl started successfully");
             response.put("status", "RUNNING");
             response.put("tier", user.getSubscriptionTier().toString());
+            response.put("canCrawl", true);
+            response.put("secondsUntilNext", 0);
+            response.put("itemsPerSource", itemsPerSource);
 
             return ResponseEntity.ok(response);
         } catch (Exception e) {
@@ -100,15 +107,26 @@ public class CrawlController {
     }
 
     /**
-     * Get crawl status
+     * Get crawl status - Check xem user có thể crawl không
      */
     @GetMapping("/status")
-    public ResponseEntity<Map<String, Object>> getCrawlStatus() {
+    public ResponseEntity<Map<String, Object>> getCrawlStatus(@AuthenticationPrincipal User user) {
         Map<String, Object> response = new HashMap<>();
-        response.put("status", "IDLE");
-        response.put("lastCrawl", null);
-        response.put("nextCrawl", null);
-        
+
+        boolean canCrawl = rateLimitService.canCrawl(user);
+        long secondsUntilNext = rateLimitService.getSecondsUntilNextCrawl(user);
+
+        response.put("canCrawl", canCrawl);
+        response.put("secondsUntilNext", secondsUntilNext);
+        response.put("tier", user.getSubscriptionTier().toString());
+
+        if (canCrawl) {
+            response.put("message", "Bạn có thể crawl ngay");
+        } else {
+            long minutesRemaining = secondsUntilNext / 60;
+            response.put("message", "Vui lòng đợi " + minutesRemaining + " phút nữa");
+        }
+
         return ResponseEntity.ok(response);
     }
 }
